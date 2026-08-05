@@ -510,6 +510,10 @@ struct llama_layer {
     struct ggml_tensor * ssm_g_b    = nullptr;
     struct ggml_tensor * ssm_o_norm = nullptr;
 
+    // ling3 uses single projections here instead of the low-rank pairs above
+    struct ggml_tensor * ssm_f      = nullptr;
+    struct ggml_tensor * ssm_g      = nullptr;
+
     // DSA (deepseek sparse attention)
     struct ggml_tensor * indexer_k_norm   = nullptr;
     struct ggml_tensor * indexer_k_norm_b = nullptr;

@@ -110,6 +110,7 @@ enum llm_arch {
     LLM_ARCH_PLM,
     LLM_ARCH_BAILINGMOE,
     LLM_ARCH_BAILINGMOE2,
+    LLM_ARCH_BAILING_HYBRID,
     LLM_ARCH_DOTS1,
     LLM_ARCH_ARCEE,
     LLM_ARCH_AFMOE,
@@ -483,6 +484,8 @@ enum llm_tensor {
     LLM_TENSOR_SSM_BETA,            // kimi: beta mixing coefficient and qwen3.5
     LLM_TENSOR_SSM_G_A,             // kimi: output gate projection A
     LLM_TENSOR_SSM_G_B,             // kimi: output gate projection B
+    LLM_TENSOR_SSM_F,               // ling3: forget gate projection, no_kda_lora
+    LLM_TENSOR_SSM_G,               // ling3: output gate projection, no_kda_lora
     LLM_TENSOR_TIME_MIX_W0,
     LLM_TENSOR_TIME_MIX_W1,
     LLM_TENSOR_TIME_MIX_W2,

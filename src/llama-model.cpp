@@ -312,6 +312,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_mimo2(params);
         case LLM_ARCH_KIMI_LINEAR:
             return new llama_model_kimi_linear(params);
+        case LLM_ARCH_BAILING_HYBRID:
+            return new llama_model_bailing_hybrid(params);
         case LLM_ARCH_STEP35:
             return new llama_model_step35(params);
         default:
@@ -2610,6 +2612,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_MAINCODER:
         case LLM_ARCH_GLM_DSA:
         case LLM_ARCH_NANBEIGE:
+        case LLM_ARCH_BAILING_HYBRID:
             return LLAMA_ROPE_TYPE_NORM;
 
         // the pairs of head values are offset by n_rot/2
