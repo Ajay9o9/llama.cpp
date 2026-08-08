@@ -230,18 +230,25 @@ llama_model_bailing_hybrid::graph::graph(const llama_model & model, const llm_gr
             ggml_tensor * Kcur = causal_conv1d(gf, ctx0, conv_states_all, conv_state_all, 1, cur, layer.wk, layer.ssm_k_conv, d_conv, head_dim, n_head, n_seq_tokens, n_seqs, n_tokens, kv_head);
             ggml_tensor * Vcur = causal_conv1d(gf, ctx0, conv_states_all, conv_state_all, 2, cur, layer.wv, layer.ssm_v_conv, d_conv, head_dim, n_head, n_seq_tokens, n_seqs, n_tokens, kv_head);
 
+            // KDA forget gate (log decay). Ling 3.0 sets kda_safe_gate, which selects
+            // the USE_LOWER_BOUND branch of the reference kernel:
+            //   gate = lower_bound * sigmoid(exp(A_log) * (g + bias))
+            // note lower_bound scales, it is not a clamp floor. the sigmoid bounds the
+            // gate to (lower_bound, 0) on its own, and unlike a clamp it stays strictly
+            // monotonic, so strongly forgetting tokens remain distinguishable.
+            constexpr float kda_lower_bound = -5.0f;
+
             ggml_tensor * g1 = ggml_mul_mat(ctx0, layer.ssm_f, cur);
             g1 = ggml_add(ctx0, g1, layer.ssm_dt_b);
-            g1 = ggml_softplus(ctx0, g1);
             g1 = ggml_reshape_3d(ctx0, g1, head_dim, n_head, n_tokens);
 
+            // the converter stores ssm_a = -exp(A_log), the gate wants +exp(A_log)
             ggml_tensor * A = ggml_reshape_3d(ctx0, layer.ssm_a, 1, n_head, 1);
-            g1 = ggml_mul(ctx0, g1, A);
+            A = ggml_scale(ctx0, A, -1.0f);
 
-            // kda_safe_gate, keeps the decay from underflowing over long contexts.
-            // config kda_lower_bound, same default as the reference implementation
-            constexpr float kda_lower_bound = -5.0f;
-            g1 = ggml_clamp(ctx0, g1, kda_lower_bound, INFINITY);
+            g1 = ggml_mul(ctx0, g1, A);
+            g1 = ggml_sigmoid(ctx0, g1);
+            g1 = ggml_scale(ctx0, g1, kda_lower_bound);
             cb(g1, "kda_g1", il);
 
             g1 = ggml_reshape_4d(ctx0, g1, head_dim, n_head, n_seq_tokens, n_seqs);
