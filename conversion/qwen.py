@@ -920,6 +920,37 @@ class DFlashModel(Qwen3Model):
             head_dim = self.hparams.get("head_dim") or self.hparams["hidden_size"] // self.hparams["num_attention_heads"]
             self.gguf_writer.add_rope_dimension_sections([head_dim // 2, 0, 0, 0])
 
+        if self._is_dspine():
+            self.gguf_writer.add_selector_top_k(self._dspine_head_topk())
+
+    # DSpine = DFlash + a code bridge after every layer + the serial last-write refinement
+    def _is_dspine(self) -> bool:
+        return "selected_prefix_code_bridge" in self.hparams.get("dflash_config", {})
+
+    def _dspine_head_topk(self) -> int:
+        cfg = self.hparams["dflash_config"]
+        n_layer = self.hparams["num_hidden_layers"]
+        if cfg.get("selected_prefix_terminal", True) or cfg.get("selected_prefix_terminal_residual_rank", 0):
+            raise ValueError("DSpine: only terminal-disabled code bridges are supported")
+        if cfg.get("selected_prefix_feature_write_mode") != "independent" or cfg.get("selected_prefix_feature_writes") is not True:
+            raise ValueError("DSpine: only independent learned feature writes are supported")
+        if not cfg.get("draft_block_causal") or not self.hparams.get("is_causal", True):
+            raise ValueError("DSpine: the draft block must be causal")
+        if cfg.get("selected_prefix_feature_next_token_rows", False):
+            raise ValueError("DSpine: next-token rows are not supported")
+        if list(cfg.get("selected_prefix_feature_layers", [])) != list(range(1, n_layer + 1)):
+            raise ValueError("DSpine: every draft layer must carry a bridge write")
+        second = self.hparams.get("code_bridge_second_pass", {})
+        if second.get("mode") != "serial_table" or int(second.get("first_exact", -1)) != n_layer - 1:
+            raise ValueError("DSpine: only the serial_table refinement of the last write is supported")
+        top_k = int(second["head_topk"])
+        refine = cfg.get("selected_prefix_last_write_refine")
+        if refine is not None and (refine.get("kind") != "exact_sender" or int(refine.get("head_topk", top_k)) != top_k):
+            raise ValueError("DSpine: unsupported selected_prefix_last_write_refine")
+        if top_k < 2 or top_k * (top_k + 1) > self.hparams["hidden_size"]:
+            raise ValueError("DSpine: head_topk does not fit the lattice rows")
+        return top_k
+
     def generate_extra_tensors(self) -> Iterable[tuple[str, Tensor]]:
         yield from super().generate_extra_tensors()
 
@@ -1015,6 +1046,44 @@ class DFlashModel(Qwen3Model):
             "model.candidate_selector.predecessor_codebook",
             "model.candidate_selector.successor_codebook",
         ):
+            name += ".weight"
+
+        if self._is_dspine():
+            yield from self._modify_dspine_tensors(data_torch, name, bid)
+            return
+
+        yield from super().modify_tensors(data_torch, name, bid)
+
+    def _modify_dspine_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        bridge = "model.selected_prefix_bridge."
+        n_layer = self.hparams["num_hidden_layers"]
+
+        # format version markers: validate and drop
+        if name in ("model.draft_block_causal_version", "model.last_write_refine_version",
+                    bridge + "independent_write_version", bridge + "terminal_disabled_version"):
+            if int(LazyTorchTensor.to_eager(data_torch).item()) != 1:
+                raise ValueError(f"DSpine: unsupported {name}")
+            return
+
+        # terminal projection is disabled, its weight must be all zero
+        if name == bridge + "out.weight":
+            if torch.count_nonzero(LazyTorchTensor.to_eager(data_torch)).item() != 0:
+                raise ValueError("DSpine: terminal-disabled checkpoint has a nonzero terminal projection")
+            return
+
+        # split the stacked per-layer read/write weights; the last layer reads with read_weight
+        if name == bridge + "early_read_weights":
+            for il in range(n_layer - 1):
+                yield from super().modify_tensors(data_torch[il], f"model.layers.{il}.selected_prefix_bridge.read.weight", il)
+            return
+        if name == bridge + "read_weight":
+            yield from super().modify_tensors(data_torch, f"model.layers.{n_layer - 1}.selected_prefix_bridge.read.weight", n_layer - 1)
+            return
+        if name == bridge + "feature_write_weights":
+            for il in range(n_layer):
+                yield from super().modify_tensors(data_torch[il], f"model.layers.{il}.selected_prefix_bridge.write.weight", il)
+            return
+        if name == bridge + "codebook":
             name += ".weight"
 
         yield from super().modify_tensors(data_torch, name, bid)

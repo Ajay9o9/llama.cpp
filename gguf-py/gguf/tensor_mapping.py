@@ -1722,6 +1722,30 @@ class TensorNameMap:
         MODEL_TENSOR.DFLASH_SELECTOR_HIDDEN: (
             "model.candidate_selector.hidden_projection",
         ),
+
+        MODEL_TENSOR.DSPINE_CODEBOOK: (
+            "model.selected_prefix_bridge.codebook", # dspine
+        ),
+
+        MODEL_TENSOR.DSPINE_GATE: (
+            "model.selected_prefix_bridge.gate", # dspine
+        ),
+
+        MODEL_TENSOR.DSPINE_PRED_GATE: (
+            "model.selected_prefix_bridge.predecessor_gate", # dspine
+        ),
+
+        MODEL_TENSOR.DSPINE_PREV: (
+            "model.selected_prefix_bridge.prev", # dspine
+        ),
+
+        MODEL_TENSOR.DSPINE_READ: (
+            "model.layers.{bid}.selected_prefix_bridge.read", # dspine (split from read_weight + early_read_weights)
+        ),
+
+        MODEL_TENSOR.DSPINE_WRITE: (
+            "model.layers.{bid}.selected_prefix_bridge.write", # dspine (split from feature_write_weights)
+        ),
         MODEL_TENSOR.LILICORR_ATTN_IN_PROJ: (
             "model.lilicorr.layers.{bid}.attn.in_proj",
         ),
