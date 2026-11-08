@@ -39,10 +39,13 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
     const bool has_markov   = ml.get_tensor_meta("markov_w1.weight")       != nullptr;
     const bool has_selector = ml.get_tensor_meta("selector_hidden.weight") != nullptr;
     const bool has_lilicorr = ml.get_key(LLM_KV_LILICORR_HIDDEN_SIZE, hparams.lilicorr_hidden_size, false);
+    const bool has_dspine   = ml.get_tensor_meta("dspine_codebook.weight") != nullptr;
     if (has_markov) {
         variant = VARIANT_DSPARK;
     } else if (has_selector) {
         variant = VARIANT_DFLASH2;
+    } else if (has_dspine) {
+        variant = VARIANT_DSPINE;
     } else if (has_lilicorr) {
         variant = VARIANT_LILICORR;
         load_hparams_lilicorr(ml);
@@ -104,6 +107,7 @@ void llama_model_dflash::load_arch_tensors(llama_model_loader &) {
         case VARIANT_DSPARK:   load_tensors_dspark(n_vocab_draft); break;
         case VARIANT_DFLASH2:  load_tensors_dflash2();             break;
         case VARIANT_LILICORR: load_tensors_lilicorr();            break;
+        case VARIANT_DSPINE:   load_tensors_dspine();              break;
         case VARIANT_DFLASH:                                       break;
     }
 
@@ -367,7 +371,7 @@ ggml_tensor * llama_model_dflash::graph_base::build_inp_tokens() {
     return inp_tokens;
 }
 
-ggml_tensor * llama_model_dflash::graph_base::build_layers(ggml_tensor * inp_tokens) {
+ggml_tensor * llama_model_dflash::graph_base::build_layers(ggml_tensor * inp_tokens, dspine_stash * dspine) {
     const float kq_scale = hparams.f_attention_scale != 0.0f ? hparams.f_attention_scale : 1.0f/sqrtf(float(n_embd_head));
 
     ggml_tensor * inpL = ggml_get_rows(ctx0, get_tok_embd(*this, model), inp_tokens);
@@ -465,6 +469,10 @@ ggml_tensor * llama_model_dflash::graph_base::build_layers(ggml_tensor * inp_tok
         if (layer.out_scale) {
             cur = ggml_mul(ctx0, cur, layer.out_scale);
         }
+
+        if (layer.dspine_write) {
+            cur = build_dspine_write(*this, model, cur, inp_tokens, il, il == n_layer - 1 ? dspine : nullptr);
+        }
         cb(cur, "l_out", il);
 
         inpL = cur;
@@ -546,6 +554,7 @@ std::unique_ptr<llm_graph_context> llama_model_dflash::build_arch_graph(const ll
                 case VARIANT_DFLASH2:  return std::make_unique<graph_dflash2>(params);
                 case VARIANT_DSPARK:   return std::make_unique<graph_dspark>(params);
                 case VARIANT_LILICORR: return std::make_unique<graph_lilicorr>(params);
+                case VARIANT_DSPINE:   return std::make_unique<graph_dspine>(params);
             }
             GGML_ABORT("invalid DFlash variant");
         default:
